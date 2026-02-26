@@ -1,0 +1,143 @@
+name: 预构建青龙面板
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '青龙版本 (如: 2.17.12，留空使用最新)'
+        required: false
+        default: ''
+      node_version:
+        description: 'Node.js 版本'
+        required: false
+        default: '18'
+
+ # schedule:
+ #   - cron: '0 0 * * 1'
+
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Qinglong Latest Version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(curl -sL "https://api.github.com/repos/whyour/qinglong/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
+            if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+              VERSION="2.17.12"
+            fi
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 构建版本: $VERSION"
+
+      - name: Check if Release Exists
+        id: check
+        run: |
+          RELEASE_TAG="qinglong-v${{ steps.version.outputs.version }}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}")
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Release $RELEASE_TAG 已存在，跳过构建"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✓ 将创建新 Release: $RELEASE_TAG"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ github.event.inputs.node_version || '18' }}
+
+      - name: Setup pnpm
+        if: steps.check.outputs.exists == 'false'
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Clone Qinglong
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git clone --depth 1 --branch "v${{ steps.version.outputs.version }}" \
+            https://github.com/whyour/qinglong.git qinglong || \
+          git clone --depth 1 https://github.com/whyour/qinglong.git qinglong
+
+      - name: Install Dependencies
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          cd qinglong
+          npm config set registry https://registry.npmmirror.com
+          pnpm config set registry https://registry.npmmirror.com
+          pnpm install
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          cd qinglong
+          pnpm run build:back || true
+          pnpm run build:front || true
+
+      - name: Prepare Production
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          cd qinglong
+          rm -rf node_modules
+          pnpm install --prod
+          
+          # 清理不需要的文件
+          rm -rf .git .github .vscode src back
+          rm -rf tsconfig*.json .umirc.ts *.md
+          rm -rf Dockerfile* docker-compose* .dockerignore
+          rm -rf pnpm-lock.yaml package-lock.json
+          
+          # 创建启动脚本
+          cat > start.sh << 'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          export QlPort=${QlPort:-5700}
+          exec node build/app.js
+          EOF
+          chmod +x start.sh
+
+      - name: Package
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          tar -czvf qinglong-${{ steps.version.outputs.version }}.tar.gz qinglong
+          ls -lh qinglong-*.tar.gz
+
+      - name: Create Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: qinglong-v${{ steps.version.outputs.version }}
+          name: Qinglong ${{ steps.version.outputs.version }}
+          body: |
+            Pre-built Qinglong Panel ${{ steps.version.outputs.version }}
+            
+            ✅ Includes:
+            - Built backend (build/)
+            - Built frontend (static/dist/)
+            - Production node_modules
+            - Startup script (start.sh)
+            
+            ## Quick Start
+            ```bash
+            tar -xzf qinglong-${{ steps.version.outputs.version }}.tar.gz
+            cd qinglong
+            ./start.sh
+            # Visit: http://localhost:5700
