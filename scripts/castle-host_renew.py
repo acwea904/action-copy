@@ -393,7 +393,8 @@ async def process_account(cookie_str: str, idx: int, notifier: Notifier) -> Tupl
         # ---------------------------------------------------------
         # 【代理配置核心逻辑】读取系统环境变量自动挂载代理
         # ---------------------------------------------------------
-        proxy_server = os.environ.get("PROXY_SOCKS5") or os.environ.get("PROXY_HTTP")
+        # proxy_server = os.environ.get("PROXY_SOCKS5") or os.environ.get("PROXY_HTTP")
+        proxy_server = os.environ.get("PROXY_HTTP") or os.environ.get("PROXY_SOCKS5")
         launch_args = {"headless": True, "args": ["--no-sandbox"]}
         
         if proxy_server:
