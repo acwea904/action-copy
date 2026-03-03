@@ -4,6 +4,10 @@ on:
     - cron: '45 3 * * *'  # 每天北京时间 11:45 运行
   workflow_dispatch:      # 支持手动触发
 
+permissions:
+  actions: write      # 授予删除工作流记录的权限
+  contents: read      # 授予读取代码仓库的权限
+
 jobs:
   add_time:
     runs-on: ubuntu-latest
